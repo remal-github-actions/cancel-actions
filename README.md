@@ -1,1 +1,1 @@
-# cancel-branch-actions
+# cancel-actions

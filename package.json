@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package",
-  "name": "cancel-branch-actions",
+  "name": "cancel-actions",
   "version": "1.0.0",
   "engines": {
     "node": ">=20"
