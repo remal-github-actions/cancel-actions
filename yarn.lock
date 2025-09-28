@@ -3420,9 +3420,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"cancel-branch-actions@workspace:.":
+"cancel-actions@workspace:.":
   version: 0.0.0-use.local
-  resolution: "cancel-branch-actions@workspace:."
+  resolution: "cancel-actions@workspace:."
   dependencies:
     "@actions/core": "npm:1.11.1"
     "@actions/github": "npm:6.0.1"

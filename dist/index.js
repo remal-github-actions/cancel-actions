@@ -38071,15 +38071,48 @@ function newOctokitInstance(token) {
 
 
 const githubToken = core.getInput('githubToken', { required: true });
-const _dryRun = core.getInput('dryRun', { required: false }).toLowerCase() === 'true';
+const dryRun = core.getInput('dryRun').toLowerCase() === 'true';
 const octokit = newOctokitInstance(githubToken);
+const statusesToFind = [
+    'action_required',
+    'stale',
+    'in_progress',
+    'queued',
+    'requested',
+    'waiting',
+    'pending',
+];
+const checkSuiteCreationDelayMillis = 0;
+const cancelAttempts = 5;
+const cancelRetryDelayMillis = 5_000;
+const now = Date.now();
 async function run() {
     try {
-        const repositoryInfo = await octokit.repos.get({
+        log(`context`, github.context);
+        let commitSha = undefined;
+        if (github.context.eventName === 'pull_request') {
+            const pullRequest = github.context.payload.pull_request;
+            log(`pullRequest: #${pullRequest?.number}`, pullRequest);
+            commitSha = pullRequest?.head?.sha;
+        }
+        else if (github.context.eventName === 'delete') {
+            commitSha = github.context.sha;
+        }
+        else {
+            log(`Unsupported event: ${github.context.eventName}`);
+            return;
+        }
+        if (commitSha == null) {
+            core.warning(`Commit SHA couldn't be detected.`);
+            return;
+        }
+        log(`Commit SHA: ${commitSha}`);
+        const checkSuites = await octokit.paginate(octokit.checks.listSuitesForRef, {
             owner: github.context.repo.owner,
             repo: github.context.repo.repo,
+            ref: commitSha,
         });
-        core.info(JSON.stringify(repositoryInfo, null, 2));
+        await Promise.all(checkSuites.map(checkSuite => processCheckSuite(commitSha, checkSuite)));
     }
     catch (error) {
         core.setFailed(error instanceof Error ? error : `${error}`);
@@ -38087,4 +38120,118 @@ async function run() {
     }
 }
 run();
+async function processCheckSuite(expectedCommitSha, checkSuite) {
+    log(`checkSuite: ${checkSuite.id}: ${checkSuite.app?.slug}`, checkSuite);
+    if (checkSuite.app?.slug !== 'github-actions') {
+        log(`Skipping not a GitHub Actions check suite: ${checkSuite.url}`);
+        return;
+    }
+    if (checkSuite.head_commit.id !== expectedCommitSha) {
+        log(`Skipping GitHub Action for another commit: ${checkSuite.url}`);
+        return;
+    }
+    if (checkSuite.status != null && !statusesToFind.includes(checkSuite.status)) {
+        log(`Skipping completed GitHub Action check suite: ${checkSuite.url}: ${checkSuite.status}`);
+        return;
+    }
+    if (checkSuite.created_at?.length) {
+        const createdAt = new Date(checkSuite.created_at).getTime();
+        const delayMillis = createdAt - (now - checkSuiteCreationDelayMillis);
+        if (delayMillis > 0) {
+            log(`delayMillis`, delayMillis);
+            await sleep(delayMillis);
+        }
+    }
+    async function processWorkflowRun(workflowRun, attempt = 1) {
+        if (attempt > 1) {
+            workflowRun = await octokit.actions.getWorkflowRun({
+                owner: github.context.repo.owner,
+                repo: github.context.repo.repo,
+                run_id: workflowRun.id,
+            }).then(it => it.data);
+        }
+        log(`workflowRun: ${workflowRun.id} (attempt ${attempt})`, workflowRun);
+        if (workflowRun.id === github.context.runId) {
+            log(`Skipping current workflow run: ${workflowRun.url}`);
+            return;
+        }
+        if (!statusesToFind.includes(workflowRun.status)) {
+            log(`Skipping workflow run: ${workflowRun.url}: ${workflowRun.status}`);
+            return;
+        }
+        try {
+            if (attempt > cancelAttempts) {
+                core.warning(`Forcefully canceling workflow run: ${workflowRun.url} (attempt ${attempt})`);
+                if (dryRun) {
+                    return;
+                }
+                await octokit.actions.forceCancelWorkflowRun({
+                    owner: github.context.repo.owner,
+                    repo: github.context.repo.repo,
+                    run_id: workflowRun.id,
+                });
+                return;
+            }
+            core.warning(`Canceling workflow run: ${workflowRun.url} (attempt ${attempt})`);
+            if (dryRun) {
+                return;
+            }
+            await octokit.actions.cancelWorkflowRun({
+                owner: github.context.repo.owner,
+                repo: github.context.repo.repo,
+                run_id: workflowRun.id,
+            });
+        }
+        catch (e) {
+            core.error(e instanceof Error ? e.message : `${e}`);
+        }
+        await sleep(cancelRetryDelayMillis);
+        return processWorkflowRun(workflowRun, attempt + 1);
+    }
+    const workflowRuns = await octokit.paginate(octokit.actions.listWorkflowRunsForRepo, {
+        owner: github.context.repo.owner,
+        repo: github.context.repo.repo,
+        check_suite_id: checkSuite.id,
+        event: 'pull_request',
+    });
+    await Promise.all(workflowRuns.map(it => processWorkflowRun(it)));
+}
+function log(message, object = undefined) {
+    const isDumpAvailable = core.isDebug();
+    if (!isDumpAvailable) {
+        return;
+    }
+    if (object === undefined) {
+        core.info(message);
+        return;
+    }
+    core.startGroup(message);
+    core.info(JSON.stringify(object, (key, value) => [
+        '_links',
+        'repository',
+        'head_repository',
+        'repo',
+        'user',
+        'owner',
+        'organization',
+        'sender',
+        'actor',
+        'triggering_actor',
+        'body',
+        'labels',
+        'assignee',
+        'assignees',
+        'requested_reviewers',
+        'events',
+        'permissions',
+    ].includes(key)
+        ? null
+        : value, 2));
+    core.endGroup();
+}
+function sleep(millis) {
+    return new Promise((resolve) => {
+        setTimeout(resolve, millis);
+    });
+}
 
