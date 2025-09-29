@@ -35,34 +35,32 @@ async function run(): Promise<void> {
     try {
         log(`context`, context)
 
-        let commitSha: string | undefined = undefined
+        let ref: string | undefined = undefined
         if (context.eventName === 'pull_request') {
             const pullRequest = context.payload.pull_request!
             log(`pullRequest: #${pullRequest?.number}`, pullRequest)
-            commitSha = pullRequest?.head?.sha
+            ref = pullRequest?.head?.ref
         } else if (context.eventName === 'delete') {
-            commitSha = context.sha
+            ref = context.payload.ref
         } else {
             log(`Unsupported event: ${context.eventName}`)
             return
         }
 
-        if (commitSha == null) {
-            core.warning(`Commit SHA couldn't be detected.`)
+        if (ref == null) {
+            core.warning(`Ref couldn't be detected`)
             return
         }
 
-        log(`Commit SHA: ${commitSha}`)
+        log(`Ref: ${ref}`)
 
         const checkSuites = await octokit.paginate(octokit.checks.listSuitesForRef, {
             owner: context.repo.owner,
             repo: context.repo.repo,
-            ref: commitSha,
+            ref,
         })
 
-        await Promise.all(checkSuites.map(checkSuite =>
-            processCheckSuite(commitSha, checkSuite),
-        ))
+        await Promise.all(checkSuites.map(processCheckSuite))
 
     } catch (error) {
         core.setFailed(error instanceof Error ? error : `${error}`)
@@ -76,15 +74,10 @@ run()
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 
-async function processCheckSuite(expectedCommitSha: string, checkSuite: CheckSuite) {
+async function processCheckSuite(checkSuite: CheckSuite) {
     log(`checkSuite: ${checkSuite.id}: ${checkSuite.app?.slug}`, checkSuite)
     if (checkSuite.app?.slug !== 'github-actions') {
         log(`Skipping not a GitHub Actions check suite: ${checkSuite.url}`)
-        return
-    }
-
-    if (checkSuite.head_commit.id !== expectedCommitSha) {
-        log(`Skipping GitHub Action for another commit: ${checkSuite.url}`)
         return
     }
 
@@ -166,7 +159,7 @@ async function processCheckSuite(expectedCommitSha: string, checkSuite: CheckSui
 }
 
 function log(message: string, object: any = undefined) {
-    const isDumpAvailable = core.isDebug()
+    const isDumpAvailable = true || core.isDebug()
     if (!isDumpAvailable) {
         return
     }
