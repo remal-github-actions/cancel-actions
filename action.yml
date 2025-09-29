@@ -8,8 +8,8 @@ inputs:
     description: GitHub access token
   ref:
     required: true
-    default: '${{github.head_ref || github.ref_name}}'
-    description: The Git ref that was deleted or closed
+    default: '${{github.event.pull_request.head.sha || github.ref_name}}'
+    description: The Git ref to search GitHub action runs for
   prNumber:
     required: false
     default: '${{github.event.pull_request.number}}'
