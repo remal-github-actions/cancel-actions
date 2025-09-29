@@ -38089,30 +38089,30 @@ const now = Date.now();
 async function run() {
     try {
         log(`context`, github.context);
-        let commitSha = undefined;
+        let ref = undefined;
         if (github.context.eventName === 'pull_request') {
             const pullRequest = github.context.payload.pull_request;
             log(`pullRequest: #${pullRequest?.number}`, pullRequest);
-            commitSha = pullRequest?.head?.sha;
+            ref = pullRequest?.head?.ref;
         }
         else if (github.context.eventName === 'delete') {
-            commitSha = github.context.sha;
+            ref = github.context.payload.ref;
         }
         else {
             log(`Unsupported event: ${github.context.eventName}`);
             return;
         }
-        if (commitSha == null) {
-            core.warning(`Commit SHA couldn't be detected.`);
+        if (ref == null) {
+            core.warning(`Ref couldn't be detected`);
             return;
         }
-        log(`Commit SHA: ${commitSha}`);
+        log(`Ref: ${ref}`);
         const checkSuites = await octokit.paginate(octokit.checks.listSuitesForRef, {
             owner: github.context.repo.owner,
             repo: github.context.repo.repo,
-            ref: commitSha,
+            ref,
         });
-        await Promise.all(checkSuites.map(checkSuite => processCheckSuite(commitSha, checkSuite)));
+        await Promise.all(checkSuites.map(processCheckSuite));
     }
     catch (error) {
         core.setFailed(error instanceof Error ? error : `${error}`);
@@ -38120,14 +38120,10 @@ async function run() {
     }
 }
 run();
-async function processCheckSuite(expectedCommitSha, checkSuite) {
+async function processCheckSuite(checkSuite) {
     log(`checkSuite: ${checkSuite.id}: ${checkSuite.app?.slug}`, checkSuite);
     if (checkSuite.app?.slug !== 'github-actions') {
         log(`Skipping not a GitHub Actions check suite: ${checkSuite.url}`);
-        return;
-    }
-    if (checkSuite.head_commit.id !== expectedCommitSha) {
-        log(`Skipping GitHub Action for another commit: ${checkSuite.url}`);
         return;
     }
     if (checkSuite.status != null && !statusesToFind.includes(checkSuite.status)) {
@@ -38197,7 +38193,7 @@ async function processCheckSuite(expectedCommitSha, checkSuite) {
     await Promise.all(workflowRuns.map(it => processWorkflowRun(it)));
 }
 function log(message, object = undefined) {
-    const isDumpAvailable = core.isDebug();
+    const isDumpAvailable =  true || 0;
     if (!isDumpAvailable) {
         return;
     }
