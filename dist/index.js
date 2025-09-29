@@ -38071,6 +38071,8 @@ function newOctokitInstance(token) {
 
 
 const githubToken = core.getInput('githubToken', { required: true });
+const ref = core.getInput('ref', { required: true });
+const prNumber = parseInt(core.getInput('prNumber'));
 const dryRun = core.getInput('dryRun').toLowerCase() === 'true';
 const octokit = newOctokitInstance(githubToken);
 const statusesToFind = [
@@ -38088,25 +38090,13 @@ const cancelRetryDelayMillis = 5_000;
 const now = Date.now();
 async function run() {
     try {
-        log(`context`, github.context);
-        let ref = undefined;
-        if (github.context.eventName === 'pull_request') {
-            const pullRequest = github.context.payload.pull_request;
-            log(`pullRequest: #${pullRequest?.number}`, pullRequest);
-            ref = pullRequest?.head?.ref;
-        }
-        else if (github.context.eventName === 'delete') {
-            ref = github.context.payload.ref;
+        if (prNumber) {
+            core.info(`Attempting to cancel running GitHub Actions for PR #${prNumber} at ref ${ref}`);
         }
         else {
-            log(`Unsupported event: ${github.context.eventName}`);
-            return;
+            core.info(`Attempting to cancel running GitHub Actions for branch at ref ${ref}`);
         }
-        if (ref == null) {
-            core.warning(`Ref couldn't be detected`);
-            return;
-        }
-        log(`Ref: ${ref}`);
+        log(`context`, github.context);
         const checkSuites = await octokit.paginate(octokit.checks.listSuitesForRef, {
             owner: github.context.repo.owner,
             repo: github.context.repo.repo,
@@ -38122,6 +38112,29 @@ async function run() {
 run();
 async function processCheckSuite(checkSuite) {
     log(`checkSuite: ${checkSuite.id}: ${checkSuite.app?.slug}`, checkSuite);
+    const checkSuitePrNumbers = checkSuite.pull_requests?.map(it => it.number) ?? [];
+    if (prNumber) {
+        if (checkSuitePrNumbers.length === 0) {
+            log(`Skipping GitHub Action check suite for a branch: ${checkSuite.url}`);
+            return;
+        }
+        else if (checkSuitePrNumbers.length === 1) {
+            if (checkSuitePrNumbers[0] !== prNumber) {
+                log(`Skipping GitHub Action check suite for another Pull Request: ${checkSuite.url}`);
+                return;
+            }
+        }
+        else {
+            log(`Skipping GitHub Action check suite for multiple Pull Requests: ${checkSuite.url}`);
+            return;
+        }
+    }
+    else {
+        if (checkSuitePrNumbers.length > 0) {
+            log(`Skipping GitHub Action check suite for a Pull Request: ${checkSuite.url}`);
+            return;
+        }
+    }
     if (checkSuite.app?.slug !== 'github-actions') {
         log(`Skipping not a GitHub Actions check suite: ${checkSuite.url}`);
         return;
@@ -38138,6 +38151,13 @@ async function processCheckSuite(checkSuite) {
             await sleep(delayMillis);
         }
     }
+    const workflowRuns = await octokit.paginate(octokit.actions.listWorkflowRunsForRepo, {
+        owner: github.context.repo.owner,
+        repo: github.context.repo.repo,
+        check_suite_id: checkSuite.id,
+        event: prNumber ? 'pull_request' : 'push',
+    });
+    await Promise.all(workflowRuns.map(processWorkflowRun));
     async function processWorkflowRun(workflowRun, attempt = 1) {
         if (attempt > 1) {
             workflowRun = await octokit.actions.getWorkflowRun({
@@ -38184,13 +38204,6 @@ async function processCheckSuite(checkSuite) {
         await sleep(cancelRetryDelayMillis);
         return processWorkflowRun(workflowRun, attempt + 1);
     }
-    const workflowRuns = await octokit.paginate(octokit.actions.listWorkflowRunsForRepo, {
-        owner: github.context.repo.owner,
-        repo: github.context.repo.repo,
-        check_suite_id: checkSuite.id,
-        event: 'pull_request',
-    });
-    await Promise.all(workflowRuns.map(it => processWorkflowRun(it)));
 }
 function log(message, object = undefined) {
     const isDumpAvailable =  true || 0;
@@ -38226,6 +38239,9 @@ function log(message, object = undefined) {
     core.endGroup();
 }
 function sleep(millis) {
+    if (millis <= 0) {
+        return Promise.resolve();
+    }
     return new Promise((resolve) => {
         setTimeout(resolve, millis);
     });
