@@ -10,6 +10,8 @@ export type WorkflowRunStatus = components['parameters']['workflow-run-status']
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 const githubToken = core.getInput('githubToken', { required: true })
+const ref = core.getInput('ref', { required: true })
+const prNumber = parseInt(core.getInput('prNumber'))
 const dryRun = core.getInput('dryRun').toLowerCase() === 'true'
 
 const octokit = newOctokitInstance(githubToken)
@@ -33,26 +35,13 @@ const now = Date.now()
 
 async function run(): Promise<void> {
     try {
-        log(`context`, context)
-
-        let ref: string | undefined = undefined
-        if (context.eventName === 'pull_request') {
-            const pullRequest = context.payload.pull_request!
-            log(`pullRequest: #${pullRequest?.number}`, pullRequest)
-            ref = pullRequest?.head?.ref
-        } else if (context.eventName === 'delete') {
-            ref = context.payload.ref
+        if (prNumber) {
+            core.info(`Attempting to cancel running GitHub Actions for PR #${prNumber} at ref ${ref}`)
         } else {
-            log(`Unsupported event: ${context.eventName}`)
-            return
+            core.info(`Attempting to cancel running GitHub Actions for branch at ref ${ref}`)
         }
 
-        if (ref == null) {
-            core.warning(`Ref couldn't be detected`)
-            return
-        }
-
-        log(`Ref: ${ref}`)
+        log(`context`, context)
 
         const checkSuites = await octokit.paginate(octokit.checks.listSuitesForRef, {
             owner: context.repo.owner,
@@ -76,6 +65,29 @@ run()
 
 async function processCheckSuite(checkSuite: CheckSuite) {
     log(`checkSuite: ${checkSuite.id}: ${checkSuite.app?.slug}`, checkSuite)
+
+    const checkSuitePrNumbers = checkSuite.pull_requests?.map(it => it.number) ?? []
+    if (prNumber) {
+        if (checkSuitePrNumbers.length === 0) {
+            log(`Skipping GitHub Action check suite for a branch: ${checkSuite.url}`)
+            return
+        } else if (checkSuitePrNumbers.length === 1) {
+            if (checkSuitePrNumbers[0] !== prNumber) {
+                log(`Skipping GitHub Action check suite for another Pull Request: ${checkSuite.url}`)
+                return
+            }
+        } else {
+            log(`Skipping GitHub Action check suite for multiple Pull Requests: ${checkSuite.url}`)
+            return
+        }
+
+    } else {
+        if (checkSuitePrNumbers.length > 0) {
+            log(`Skipping GitHub Action check suite for a Pull Request: ${checkSuite.url}`)
+            return
+        }
+    }
+
     if (checkSuite.app?.slug !== 'github-actions') {
         log(`Skipping not a GitHub Actions check suite: ${checkSuite.url}`)
         return
@@ -95,6 +107,14 @@ async function processCheckSuite(checkSuite: CheckSuite) {
         }
     }
 
+
+    const workflowRuns = await octokit.paginate(octokit.actions.listWorkflowRunsForRepo, {
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        check_suite_id: checkSuite.id,
+        event: 'pull_request',
+    })
+    await Promise.all(workflowRuns.map(processWorkflowRun))
 
     async function processWorkflowRun(workflowRun: WorkflowRun, attempt: number = 1) {
         if (attempt > 1) {
@@ -148,14 +168,6 @@ async function processCheckSuite(checkSuite: CheckSuite) {
         await sleep(cancelRetryDelayMillis)
         return processWorkflowRun(workflowRun, attempt + 1)
     }
-
-    const workflowRuns = await octokit.paginate(octokit.actions.listWorkflowRunsForRepo, {
-        owner: context.repo.owner,
-        repo: context.repo.repo,
-        check_suite_id: checkSuite.id,
-        event: 'pull_request',
-    })
-    await Promise.all(workflowRuns.map(it => processWorkflowRun(it)))
 }
 
 function log(message: string, object: any = undefined) {
@@ -200,6 +212,10 @@ function log(message: string, object: any = undefined) {
 }
 
 function sleep(millis: number): Promise<void> {
+    if (millis <= 0) {
+        return Promise.resolve()
+    }
+
     return new Promise((resolve) => {
         setTimeout(resolve, millis)
     })

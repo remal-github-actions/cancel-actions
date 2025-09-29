@@ -6,6 +6,13 @@ inputs:
     required: true
     default: '${{github.token}}'
     description: GitHub access token
+  ref:
+    required: true
+    default: '${{github.ref}}'
+    description: The Git ref that was deleted or closed
+  prNumber:
+    required: false
+    description: The Pull Request number if applicable
   dryRun:
     required: true
     default: 'false'
