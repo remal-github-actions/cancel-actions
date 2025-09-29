@@ -10,7 +10,7 @@ export type WorkflowRunStatus = components['parameters']['workflow-run-status']
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 const githubToken = core.getInput('githubToken', { required: true })
-const ref = core.getInput('ref', { required: true })
+const sha = core.getInput('sha', { required: true })
 const prNumber = parseInt(core.getInput('prNumber'))
 const dryRun = core.getInput('dryRun').toLowerCase() === 'true'
 
@@ -36,9 +36,9 @@ const now = Date.now()
 async function run(): Promise<void> {
     try {
         if (prNumber) {
-            core.info(`Attempting to cancel running GitHub Actions for PR #${prNumber} at ref ${ref}`)
+            core.info(`Attempting to cancel running GitHub Actions for PR #${prNumber} at SHA ${sha}`)
         } else {
-            core.info(`Attempting to cancel running GitHub Actions for branch at ref ${ref}`)
+            core.info(`Attempting to cancel running GitHub Actions for branch at SHA ${sha}`)
         }
 
         log(`context`, context)
@@ -46,7 +46,7 @@ async function run(): Promise<void> {
         const checkSuites = await octokit.paginate(octokit.checks.listSuitesForRef, {
             owner: context.repo.owner,
             repo: context.repo.repo,
-            ref,
+            ref: sha,
         })
 
         await Promise.all(checkSuites.map(processCheckSuite))

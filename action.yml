@@ -6,10 +6,10 @@ inputs:
     required: true
     default: '${{github.token}}'
     description: GitHub access token
-  ref:
+  sha:
     required: true
-    default: '${{github.event.pull_request.head.sha || github.ref_name}}'
-    description: The Git ref to search GitHub action runs for
+    default: '${{github.event.pull_request.head.sha || github.sha}}'
+    description: The Git sha to search GitHub action runs for
   prNumber:
     required: false
     default: '${{github.event.pull_request.number}}'
