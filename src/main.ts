@@ -112,7 +112,7 @@ async function processCheckSuite(checkSuite: CheckSuite) {
         owner: context.repo.owner,
         repo: context.repo.repo,
         check_suite_id: checkSuite.id,
-        event: 'pull_request',
+        event: prNumber ? 'pull_request' : 'push',
     })
     await Promise.all(workflowRuns.map(processWorkflowRun))
 
