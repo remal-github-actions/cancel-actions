@@ -12,6 +12,7 @@ inputs:
     description: The Git ref that was deleted or closed
   prNumber:
     required: false
+    default: '${{github.event.pull_request.number}}'
     description: The Pull Request number if applicable
   dryRun:
     required: true
